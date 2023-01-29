@@ -12,14 +12,14 @@
 
   <h3 align="center">NOTES</h3>
 
-  <p align="center">
-    This repository contains my notes on following topics 👇🏼
-    - AWS, GCP, AZURE
-    - Observability
-    - Golang
-    - System and software architect
-    - Notes on certifications
-
-  </p>
 </p>
 
+
+
+
+This repository contains my notes on following topics 👇🏼
+- AWS, GCP, AZURE
+- Observability
+- Golang
+- System and software architect
+- Notes on certifications
