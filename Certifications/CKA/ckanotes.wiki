@@ -1,0 +1,467 @@
+= CORE CONCEPTS =
+== CLUSTER ARCHITECTURE ==
+- Worker Nodes
+  - Hosts applications in containers
+  - kubelet:
+    - captain of the ship
+    - an _agent_ that runs on each node in a cluster
+    - listens for _instructions from the api-server_ and _deploys or destroys_ containers on the nodes as required
+  - kubeproxy:
+    - _communication between worker nodes_ is enabled by this component
+  - container runtime
+- Master Nodes
+  - Manages and monitors workers
+  - etcd:
+    - a database that stores information in _key-value_ format
+  - scheduler:
+    - identifies the right node to place a container on based on the resource reqs.
+  - controller:
+    - takes care of different areas between worker and master nodes:
+      - node-controller
+      - replication-controller
+      - controller-manager
+  - api-server:
+    - the _primary management component_ for k8s
+    - responsible for _orchestrating all operations inside the cluster_
+    - periodically fetches status reports from the _kubelet_ to monitor the state of nodes
+  - container runtime
+
+=== ETCD ===
+- a _reliable, distributed key-value store_ that is _simple, secure and fast_
+- stores information about the _nodes, pods, configs, secrets, accounts, roles, bindings and other_
+- output of "kubectl" commands come from the _etcd server_
+- changes to our cluster happens through the _etcd server_
+- the _etcd server_ is *CONFIGURED DIFFERENTLY* depending on how we deploy our clusters:
+  - manual deployment:
+    - you deploy etcd by _downloading the binaries yourself_ and _configuring etcd as service in your master node_
+    - "--advertise-client-urls" will be the address on which etcd listens
+    - we configure this URL to be the _etcd server_ in the *kube-api server*
+  - kubeadm:
+    - kubeadm deploys the _etcd server_ as a _POD_ in the _kube-system namespace_
+
+-> ETCD in High Availability Environment
+- When you are manually setting up the _etcd server_ in HA:
+  - You will have multiple master nodes with multiple _etcd servers_
+  - You need to _SPECIFY the etcd instances_ so that they know about each other:
+    - "--initial-cluster"
+
+=== KUBE-API SERVER ===
+- _primary management component_
+TIP: kubectl commands can also be sent as a POST/GET(?) request to the kube-apiserver
+- for example when you want to create a new node:
+  - authenticate user
+  - validate request
+  - retrieve data
+  - update etcd
+  - scheduler
+  - kubelet
+- directly interacts with the _etcd server_
+- it can be installed _manually_ as a binary
+
+TIP: you can either look at the _"/etc/kubernetes/manifests"_ folder or "/etc/systemd/system/kube-apiserver.service" or "ps aux | grep kube-apiserver" for the options
+
+=== KUBE CONTROLLER MANAGER ===
+- watch status, remediate situation
+- a _controller_ is a process that continuously monitors the state of various components within the system and works towards bringing the whole system to the desired state
+- node-controller:
+  - checks the status of nodes every _5 seconds_ through the "kube-apiserver"
+  - if a node _DOES NOT_ respond in this timeframe it is marked _UNREACHABLE_ but it waits for _40 seconds_ (grace period)
+  - after a node becomes _UNREACHABLE_ it gives it _5 minutes_ to come back up (POD eviction time)
+  - if it doesn't come back up, it removes the pods assigned to that node and provisions them on healthy ones if there is a replicaset
+- replication-controller:
+  - responsible for _monitoring the status of replica sets and ensures that the desired number of pods are available at all times within the set_
+- every concept we have seen so far _deployments, namespaces, endpoints etc._ has a corresponding _CONTROLLER_
+- all these different controllers are packaged into _a single process_ known as the "k8s-controller-manager"
+- install the binary and run it as a service
+- you can see the options similarly to the kube-apiserver
+
+=== SCHEDULER ===
+- responsible for _scheduling pods on nodes_
+- *only responsible* for deciding _which pod goes on which node_ it doesn't actually place the pod
+  - placing the pod is the job of the _"kubelet"_
+- it goes through _TWO PHASES_ to identify the _best node_ for a pod:
+  - filter nodes:
+    - filters out the nodes that _DO NOT_ fit the profile for this pod
+  - rank nodes:
+    - ranks the nodes to find the _best fit_
+    - priority function to assign a score to the nodes from 0 to 10
+- installed as a binary and run it as a service
+- same deal for the options as the kube-apiserver
+
+=== KUBELET ===
+- sole point of contact from the master nodes
+- load or unload containers to the worker as instructed by the _scheduler_ (through the api server)
+- sends back reports at _regular intervals_ about the status of the node and pods on it
+- example work:
+  - _REGISTERS_ the node with the k8s cluster
+  - _REQUESTS_ the *container runtime engine*, to create the pod
+  - then _MONITORS_ the state of the pod and containers in it and _REPORTS_ to the kube-apiserver
+- "kubeadm" _DOES NOT_ deploy kubelets
+- you _MUST_ always install the kubelet on your worker nodes
+
+=== KUBEPROXY ===
+- a process that runs on each node in a k8s cluster
+- it looks for _new services_ and every time a new service is created; it creates the appropriate rules on each node to forward traffic to those services to the relevant pods
+- It does this by _IP tables rules_:
+  - it creates an _IP tables_ rule on each node in the cluster to forward traffic heading to the IP of the service to the IP of the actual pod
+- installed as a binary and run it as a service
+
+CERT. TIP -> It might be difficult to copy/paste YAML files so use the "--dry-run=client -o yaml" to _GENERATE_ yaml files
+kubectl run nginx --image=nginx --dry-run=client -o yaml
+kubectl create deployment --image=nginx nginx --dry-run=client -o yaml
+
+LINK -> https://kubernetes.io/docs/reference/kubectl/conventions/
+
+=== NAMESPACES ===
+- k8s automatically creates three namespaces when the cluster is _first set up_
+  - default namespace
+  - kube-system namespace
+    - since k8s creates a set of pods and services for its _internal purposes_ (ie. networking solution, DNS service) to _ISOLATE_ these they are created under this namespace
+  - kube-public namespace
+    - resources that should be available for all users are created here
+- you can create _your own namespace_
+- example:
+  - if you want to use the same cluster as both dev & prod environment but you want to isolate the resources between them
+  - you can just create a different namespace for each of them
+- you can _assign a quota of resources_ to each namespace
+- when pods/services refer to others in the same namespace they can just use the resource's name
+- however, when you are trying to refer to a resource in _another namespace_:
+  - you _MUST APPEND_ the namespace to the name of the service
+  - ex. "db-service.dev.svc.cluster.local"
+- we are able to do this because _when a service is created a DNS entry is automatically added in this format_
+- you can specify the "namespace" under the _metadata_ part of a YAML file
+- you can create _a new namespace_ by creating a namespace definition file:
+  - "kind: Namespace"
+- or you can use the imperative command _"kubectl create ns <name>"_
+- "kubectl get pods" shows pods inside the _default namespace_
+- _TO SWITCH TO ANOTHER NAMESPACE_: "kubectl config set-context $(kubectl config current-context) --namespace=<NAME>"
+- To limit resources in a namespace _CREATE A RESOURCE QUOTA_:
+  - "kind: ResourceQuota"
+  - and you need to specify the namespace for which you are trying to create the resource quota for under the metadata
+  - under _spec_ specify your limits
+
+=== SERVICES ===
+- Refer to "k8s for absolute beginners"
+TIP -> "kubectl expose" to create a NodePort service
+
+=== IMPERATIVE VS. DECLARATIVE ===
+- Imperative:
+  - Set of instructions _step-by-step_
+  - Using _kubectl commands_ one-by-one
+  - creating, replacing, deleting using _YAML files_
+  - hard to _KEEP TRACK OF_ the _history_ if you use commands:
+    - use YAML files
+- Declarative:
+  - You declare _the requirements_
+  - "kubectl apply" command 
+  - you can _SPECIFY_ a _path_ instead of a _single file_ and all the objects will be created
+
+CERT. TIP -> if you _don't_ have a complex req. use _imperative approach with commands_ otherwise _YAML files_
+LINK -> https://kubernetes.io/docs/reference/generated/kubectl/kubectl-commands
+
+=== KUBECTL APPLY COMMAND ===
+- When you use the _apply command_ a _"Last applied configuration"_ file is created in *JSON format*
+- Any changes to be made are compared between the _local YAML file_, the last applied config, and the live k8s object config
+- the _last applied config_ is stored inside the *live object config* as an annotation
+
+== SCHEDULING ==
+=== MANUAL SCHEDULING ===
+- What to schedule?
+  - Every pod you create has a _nodeName_ property that is not set by default
+  - The scheduler goes through the pods and looks for ones that _DO NOT have this property set_
+- Which node to schedule=
+  - Then, it runs the _scheduling algorithm_ to find the right node for this pod
+- (Schedule) Bind Pod to Node
+  - It schedules the pod one the node by setting the _nodeName property to the name of the pod_
+- If there is _NO scheduler_ pods will be stuck in a _pending_ state
+- Easiest way to schedule manually would be to set the _nodeName property for a pod_
+- k8s _WILL NOT allow you to modify the nodeName property of a pod_
+- You can create a _binding object_ and send a POST request to the pods binding API
+
+=== LABELS AND SELECTORS ===
+- standard method for _grouping things together_
+- labels:
+  - properties attached to each item
+- selectors:
+  - help you _filter_ these items
+- "kubectl get pods --selector app=App1" 
+
+=== TAINTS AND TOLERATIONS ===
+- Taints and tolerations are _used to set restrictions on what pods can be scheduled on a node_
+- assume that you have dedicated resource on one of your nodes so we want only the pods that belong to a specific app:
+  - first you apply a _taint_ on the node and prevent all pods from being scheduled
+  - pods have _zero toleration_ by default
+  - now we must _SPECIFY_ which pods are _tolerant_ to this taint
+- "kubectl taint nodes <NODE_NAME> <KEY=VAL:taint-effect>
+- there are _three taint effects-:
+  - NoSchedule
+    - pods will not be scheduled on this node
+  - PreferNoSchedule
+    - the system will _try to avoid_ placing a pod on the node
+  - NoExecute
+    - no _new pods will be scheduled and if there are _existing pods_ on the node they will be evicted if they don't tolerate the taint
+- to add _TOLERATIONS_:
+  - under the spec (everything should be in double quotes):
+    - tolerations (this is a list):
+      - key:"<KEY_NAME>"
+      - operator:"Equal"
+      - value:"<VAL_NAME>"
+      - effect:"<TAINT_EFFECT>"
+- scheduler _DOES NOT_ schedule any new pods on the _master node_ because when the k8s cluster is first set up the _master nodes are tainted_
+
+=== NODE SELECTORS ===
+- imagine you have three nodes with one having extra resources, you want to schedule data processing tasks to this node with extra resources
+- under the spec:
+  - nodeSelector: 
+    - size: Large
+- you need to _label your nodes_ before using the nodeSelector like this
+- "kubectl label nodes <NODE_NAME> <LABEL_KEY>=<LABEL_VAL>"
+- _CANNOT_ handle complex requirements
+
+=== NODE AFFINITY ===
+- _ENSURE_ that _pods are hosted on particular nodes_
+- under the spec:
+  - affinity:
+    - nodeAffinity:
+- two types of affinities available:
+  - requiredDuringSchedulingIgnoredDuringExecution
+  - preferredDuringSchedulingIgnoredDuringExecution
+
+TIP: Usually you will have to use a _combination_ of two approaches (taints and tolerations) to make sure pods run on specific nodes
+- Imagine you have red/green/blue and two other nodes and r/g/b and two other pods
+- if you use taints and tolerations one of your colored nodes can end up on a non-colored node
+- if you use node affinities one of the non-colored pods can end up on a colored node
+
+=== RESOURCE REQUIREMENTS AND LIMITS ===
+- whenever a pod is placed on a node it consumes resources available to that node
+- CPU / Mem / Disk
+- By _default_, 0.5 CPU, 256 Mebibyte of memory
+- For this to be the case, "you must have first set those as default values for request and limit by creating a LimitRange in that namespace"
+- docker containers have _NO LIMIT_ by default
+  - k8s by default makes it so that a container will be limited to  1 vCPU and 512 Mi
+- a container _CAN_ use more CPU than its limit
+  - if this is the case the pod will be _TERMINATED_
+
+=== DAEMONSETS ===
+- They are _LIKE replica sets_, as in they help you run multiple instances of pods but *it runs one copy of your pod in each node*
+- The _daemon set_ ensures that one copy of the pod is always present in all nodes in the cluster
+- _monitoring agent_ or _logging_ are _PERFECT examples_
+- kubeproxy is a _daemon set_
+- networking solutions are also _usually_ deployed as daemon sets
+- similar creation to a _replica set_ in the YAML file
+- "kubectl get daemonsets"
+
+* How does it work?
+- old way was to use the nodeName selector to bypass the scheduler
+- new way is to use _node affinity_ and the default scheduler
+
+=== STATIC PODS ===
+- If there was no API server for kubelet to communicate where to create pods, we could put our _YAML files_ in a directory and the "kubelet" would periodically check there
+- The pods that are created by the kubelet _on its own_ are called *static pods*
+- You can only create pods this way
+- "--pod-manifest-path" on the kubelet.service
+- or "staticPodPath" in kubeconfig.yaml
+- kubelet can create both _static pods_ and and ones requested by the _API server_
+- API server is _AWARE_ of the static pods created by the kubelet
+- If the static pod is a part of the a cluster, kubelet creates a _read-only mirror object_ in the kubeAPI-server
+- Why should we use them?
+  - Since they are not dependent on the k8s control plane, you can use static pods to deploy the control plane components as pods on a node
+- that's how the _kubeadm_ tool sets up the clusters
+
+| Static PODs                                    | DaemonSets                                        |
+|------------------------------------------------|---------------------------------------------------|
+| Created by the kubelet                         | Created by the API server (DaemonSet controller)  |
+| Deploy control plane components as static pods | Deploy monitoring agents, Logging agents on nodes |
+|                                Ignored by the Kube-Scheduler                                       |
+
+=== MULTIPLE SCHEDULERS ===
+- What if taints/tolerations & affinities do not satisfy your needs?
+- You can have your own k8s scheduler program, package it and deploy it as the default scheduler
+- You can also have multiple schedulers in your k8s cluster
+- When creating a pod or a deployment you can instruct k8s to have the pod scheduled by _a specific scheduler_
+- Binary and run it as a service
+- kube-scheduler.service it takes a _"--scheduler-name=<VAL>" flag_
+- you can change this name value to have your own custom scheduler
+- "--leader-elect" option:
+  - used when you have multiple copies of the scheduler running on the master nodes in a HA setup where you have multiple master nodes with the kube-scheduler process running on both of them
+  - If multiple copies of the same scheduler are running on different nodes _ONLY ONE CAN BE ACTIVE_ at a time
+- to get multiple schedulers working you must:
+  - either set the "leader-elect" option to _false_ in case where you don't have multiple masters
+  - if you do you can pass in an additional parameter to set _a lock object name_
+- when you are creating the pod:
+  - "schedulerName" inside the _YAML file_
+  - this scheduler will be picked when the pod is created
+- you can see which scheduler was picked by:
+  - "kubectl get events"
+- view scheduler logs:
+  - "kubectl logs <SCHEDULER_NAME> --name-space=kube-system"
+
+== LOGGING AND MONITORING ==
+=== MONITOR CLUSTER COMPONENTS ===
+- As of this time, _no fully-featured built-in monitoring solution_ in k8s
+- Metrics Server, Prometheus, Elastic Stack, Datadog, Dynatrace
+- kubelet has a subcomponent known as _cAdvisor or Container Advisor_:
+  - cAdvisor is responsible for retrieving _performance metrics_ and exposes them through the kubelet API
+- after adding the "metrics-server":
+  - you can view the resources with "kubectl top node/pod"
+
+=== MANAGING APPLICATION LOGS ===
+- "kubectl logs -f <POD_NAME> -> similar to _Docker_
+- If there are _multiple containers_ inside a pod you _MUST specify the name of the container_
+  - "kubectl logs -f <POD_NAME> <CONTAINER_NAME>"
+
+== APPLICATION LIFECYCLE MANAGEMENT ==
+=== ROLLING UPDATES AND ROLLBACKS ===
+- When you first create a deployment, it triggers _a rollout_, a new rollout creates a deployment revision
+- When the app is upgraded in the future, a new rollout is triggered thus a new revision
+- "kubectl rollout status <DEPLOYMENT_NAME>
+- "kubectl rollout history <DEPLOYMENT_NAME>
+- Two deployment strategies:
+  - Destroy all the old ones and then create new ones: this means that there is _DOWNTIME_: *recreate strategy*
+  - Take one down, bring one up: *rolling update* (default)
+- How do you update your application?
+  - "kubectl apply"
+  - "kubectl set image <DEPLOYMENT_NAME> nginx=nginx:1.7.0"
+    - Doing it this way will make it so that you have a different config in your deployment definition file
+- When you are upgrading, your deployment creates a _new replica set_
+- "kubectl rollout undo <DEPLOYMENT_NAME>" -> _rollback_
+
+=== CONFIGURING APPLICATIONS ===
+=== ENV VARIABLES === 
+- ENV Value Types:
+  - Plain key value
+  - ConfigMaps
+  - Secrets
+- All three are under _env:_ inside our _YAML file_
+
+=== CONFIG MAPS ===
+- When you have multiple definition files it becomes tedious to manage environment data as plain key values
+  1. Create config map
+  2. Inject them into the definition file
+- Two ways of creating:
+  - Imperative:
+    - _kubectl create configmap_
+  - Declarative:
+    - kubectl apply -f
+- Viewing configmaps:
+  - _"kubectl get configmaps"
+  - _"kubectl describe configmaps"_
+
+=== SECRETS ===
+- Similar to config maps but they are stored in a _hashed or encoded_ format
+- Create and inject again like config maps
+- While you are using the declarative approach, you _MUST_ specify the secrets in an _encoded format_
+  - base64 encoded?
+- "kubectl describe secrets" only _SHOWS the attributes but hides the values themselves_
+- you can run the same command and output a _YAML file_ to view the secret values
+  - A secret is only sent to a node if a pod on that node requires it.
+  - Kubelet stores the secret into a tmpfs so that the secret is not written to disk storage.
+  - Once the Pod that depends on the secret is deleted, kubelet will delete its local copy of the secret data as well.
+- The _ONLY thing_ that makes secrets kind of safe is best practices surrounding secrets:
+  - Not checking-in secret object definition files to source code repositories.
+  - Enabling Encryption at Rest for Secrets so they are stored encrypted in ETCD. 
+
+=== MULTI CONTAINER PODS ===
+- When you need two services running on the same pod, sharing network/storage you can just add the second container to the _definition YAML file_ under the containers part
+
+=== INIT CONTAINERS ===
+- In a multi pod setup, all containers are _EXPECTED to stay alive_ as long as pod's lifecycle.
+- If any of them fails, the pod restarts
+- But sometimes, you might want a process to run _to completion_ in one of your containers, we can solve this with *init containers*
+- init containers run sequentially one at a time.
+- If an init container fails to complete, k8s restarts the pod repeatedly until the init container succeeds
+
+== CLUSTER MAINTENANCE ==
+=== OS UPGRADES ===
+- If you have _maintenance tasks_ to be performend on a node and you know that the workloads running on the node have other replicas, it's okay that they go down for a short amount of time
+- If you are sure the node will come back online in 5 mins (default pod eviction timeout), you can make a quick upgrade and reboot
+- If you are not sure:
+  - You can purposefully drain the node *"kubectl drain <NODE_NAME>"*
+  - This means that the workloads will move to _other nodes_
+  - Technically, they are _RECREATED_ after being terminated
+  - The node is _cordoned_, in other words _marked as unschedulable_
+  - Now you can reboot the node, and _uncordon_ it
+  - _"kubectl uncordon <NODE-NAME>"_
+
+=== K8S RELEASES ===
+- v1.11.3 (major/minor/patch)
+
+=== CLUSTER UPGRADE PROCESS ===
+- kube-api server must always be at a version higher than _controller manager, scheduler, kubelet and kube-proxy_:
+  - controller and scheduler must be at most _a version lower_
+  - kubelet and kubeproxy must be at most _two versions lower_
+- *kubectl* on the other hand _can be at a version lower or higher than the api server_
+- you first upgrade _the master nodes_ then the _worker nodes_
+- "kubeadm upgrade plan"
+- you need to "apt-get upgrade kubeadm=<version>" first
+- "kubeadm upgrade apply <version>"
+- with kubeadm you need to upgrade the kubelet version on master nodes separately
+- "kubeadm upgrade node config --kubelet-version <version" after apt-get upgrade
+- then you restart the kubelet service "systemctl restart kubelet"
+
+=== BACKUP AND RESTORE METHODS ===
+- One of the commands that can be used for a backup script:
+  - _"kubectl get all --all-namespaces -o yaml > all-deploy-services.yaml"_
+- Velero (formerly known as ARK) can do this for you
+- Backing up the etcd cluster:
+  - "ETCDCTL_API=3 etcdctl snapshot save <file-name>"
+- To restore the cluster from this backup:
+  - First, stop the kubeapi-server service -> "service kube-apiserver stop"
+  - "ETCDCTL_API=3 etcdctl snapshot restore <file-name> --data-dir <backup-path>"
+  - You would then configure etcd to use the new data-dir
+  - Then, you would run "systemctl daemon-reload" and "service etcd restart"
+  - Finally, start the kubeapi-server "service kube-apiserver start"
+- With all the etcd commands, remember to specify _the certificate files_ for auth and the endpoint to the outside cluster and the cacert and the key
+
+TIP -> you can just set the "export ETCDCTL_API=3" instead of using it before every command
+
+
+
+== NETWORK TROUBLESHOOTING ==
+- _kubelet_ configs are where you can see the relevant network plugin
+- cni-bin-dir:   Kubelet probes this directory for plugins on startup
+- network-plugin: The network plugin to use from cni-bin-dir. It must match the name reported by a plugin probed from the plugin directory.
+
+- for _kube-proxy issues_ look at the daemonset / check the configmap for the configuration file to see whether or not paths match between the command used and the configmap
+
+=========================
+
+Kubernetes resources for coreDNS are:   
+
+a service account named coredns,
+cluster-roles named coredns and kube-dns
+clusterrolebindings named coredns and kube-dns, 
+a deployment named coredns,
+a configmap named coredns and a
+service named kube-dns.
+
+While analyzing the coreDNS deployment you can see that the Corefile plugin consists of important configuration which is defined as a configmap.
+
+Troubleshooting issues related to coreDNS
+1. If you find CoreDNS pods in pending state first check network plugin is installed.
+
+3. If CoreDNS pods and the kube-dns service is working fine, check the kube-dns service has valid endpoints.
+kubectl -n kube-system get ep kube-dns
+
+If there are no endpoints for the service, inspect the service and make sure it uses the correct selectors and ports.
+
+Troubleshooting issues related to kube-proxy
+1. Check kube-proxy pod in the kube-system namespace is running.
+2. Check kube-proxy logs.
+3. Check configmap is correctly defined and the config file for running kube-proxy binary is correct.
+4. kube-config is defined in the config map.
+5. check kube-proxy is running inside the container
+
+======================
+
+TIP: You _CANNOT_ record the initial deployment creation with imperative commands however you can use the *--record* flag with *kubectl apply*
+ex. *"kubectl apply -f test.yaml --record"
+
+== MISCELLANEOUS TIPS ==
+TIP: most of the time you need _"sh -c"_ before your commands to get them working inside the containers
+TIP: DaemonSets _DO NOT_ override taints & tolerations, so you need to specify the toleration if you want your DS to run on master nodes
+TIP: If you want your pods to run only once on specific nodes, you can set up _pod affinity and anti pod affinity_ rules
+TIP: to get Pod CIDR you can look at _"kubectl describe nodes"_ output
+TIP: _default kubelet cni config path_ is */etc/cni/net.d*
+TIP: you can use _"kubeadm token create --print-join-command"_ to get a join command for a node that was not initially set up in your cluster configured with _kubeadm_
+TIP: _"--no-headers"_ is a flag you can use to get rid of headers for your k8s commands
