@@ -1,0 +1,29 @@
+---
+# installing updates for ubuntu and centos servers
+- hosts: all
+  become: true
+  pre_tasks:
+    - name: install updates (CentOS)
+      tags: always
+      dnf:
+        # update_only: yes
+        update_cache: yes
+      changed_when: false
+      when: ansible_distribution == "CentOS"
+
+    - name: install updates (Ubuntu)
+      tags: always
+      apt:
+        # upgrade: dist #we dont use update_only and upgrade cause bootstrap script will make sure that the server starts with all the updates
+        # but we do want to still update the cache because we wanna see repository indexes stable otherwise that could be cause to problem and make playbook fail
+        update_cache: yes
+      changed_when: false #no any change so we wont see any changes updated maybe outputs
+      when: ansible_distribution == "Ubuntu"
+
+- hosts: all
+  roles:
+    - base
+
+- hosts: webserver
+  roles:
+    - webserver

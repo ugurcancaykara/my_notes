@@ -1,0 +1,81 @@
+---
+- hosts: all
+  pre_tasks:
+    - name: install updates (CentOS)
+      tags: always
+      dnf:
+        update_only: yes
+        update_cache: yes
+      when: ansible_distribution == "CentOS"
+
+    - name: install updates (Ubuntu)
+      tags: always
+      apt:
+        upgrade: dist
+        update_cache: yes
+      when: ansible_distribution == "Ubuntu"
+
+- hosts: webserver #baska bir grupta olabilir
+  tasks:
+    - name: install unzip
+      package:
+        name: unzip
+    - name: install terraform
+      unarchive:
+        src: https://releases.hashicorp.com/terraform/1.0.0/terraform_1.0.0_linux_amd64.zip
+        dest: /usr/local/bin
+        remote_src: yes
+        mode: 0755
+        owner: root
+        group: root
+
+- hosts: webserver
+  tasks:
+    - name: install apache and php for Ubuntu servers
+      tags: apache,apache2,ubuntu
+      apt:
+        name:
+          - apache2
+          - libapache2-mod-php
+      when: ansible_distribution == "Ubuntu  "
+    - name: install apache and php for CentOS servers
+      tags: apache,httpd,centos
+      dnf:
+        name:
+          - httpd
+          - php
+      when: ansible_distribution == "CentOS"
+
+    - name: start httpd (CentOS)
+      tags: apache,apache2,ubuntu
+      service:
+        name: apache2
+        state: started
+        #if it is also disabled
+        enabled: yes
+      when: ansible_distribution == "Ubuntu"
+
+    - name: change e-mail address for admin
+      tags: apache,apache2,ubuntu
+      lineinfile:
+        path: /etc/apache2/sites-available/000-default.conf
+        regexp: "^ServerAdmin"
+        line: ServerAdmin ugurcancaykara@gmail.com
+      when: ansible_distribution == "Ubuntu"
+      register: apache2
+
+    - name: restart apache2
+      tags: apache,apache2,ubuntu
+      service:
+        name: apache2
+        state: restarted
+      when: apache2.changed # this is first time i use here (When apache2 changed it will trigger this statement)
+
+    - name: copy default html file for site
+      tags: apache,apache2,ubuntu
+      copy:
+        src: default_site.html
+        dest: /var/www/html/index.html
+        owner: root
+        group: root
+        mode: 0644

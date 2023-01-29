@@ -1,0 +1,11 @@
+---
+- hosts: webserver
+  tasks:
+  - name: install apache and php package
+    apt:
+      name: 
+        - apache2
+        - libapache2-mod-php
+      state: absent
+      update_cache: yes
+

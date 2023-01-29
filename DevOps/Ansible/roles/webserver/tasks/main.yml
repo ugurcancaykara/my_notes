@@ -1,0 +1,64 @@
+- name: install apache and php for Ubuntu servers
+  tags: apache,apache2,ubuntu
+  apt:
+    name:
+      - "{{ apache_package_name }}"
+      - "{{ php_package_name }}"
+  when: ansible_distribution == "Ubuntu  "
+- name: install apache and php for CentOS servers
+  tags: apache,httpd,centos
+  dnf:
+    name:
+      - httpd
+      - php
+  when: ansible_distribution == "CentOS"
+
+- name: start httpd (CentOS)
+  tags: apache,apache2,ubuntu
+  service:
+    name: "{{ apache_service }}"
+    state: started
+    #if it is also disabled
+    enabled: yes
+  when: ansible_distribution == "Ubuntu"
+
+- name: change e-mail address for admin
+  tags: apache,apache2,ubuntu
+  lineinfile:
+    path: /etc/apache2/sites-available/000-default.conf
+    regexp: "^ServerAdmin"
+    line: ServerAdmin caykara@gmail.com
+  when: ansible_distribution == "Ubuntu"
+  notify: restart_apache # we define this handler at roles/webserver/handlers/main.yml
+
+  #LETS USE HANDLERS
+  #at first register this task to apache2 and used it in next task but lets assume we have 3 tasks that registered as apache2 and if one of them has no changes -name restart apache2 tasks wont be triggered
+  #updated version is ok (ignore comment lines)
+  #register: apache2
+# - name: restart apache2
+#   tags: apache,apache2,ubuntu
+#   service:
+#     name: apache2
+#     state: restarted
+#   when: apache2.changed # this is first time i use here (When apache2 changed it will trigger this statement)
+
+- name: copy default html file for site
+  tags: apache,apache2,ubuntu
+  copy:
+    src: default_site.html
+    dest: /var/www/html/index.html
+    owner: root
+    group: root
+    mode: 0644
+
+- name: install unzip
+  package:
+    name: unzip
+- name: install terraform
+  unarchive:
+    src: https://releases.hashicorp.com/terraform/1.0.0/terraform_1.0.0_linux_amd64.zip
+    dest: /usr/local/bin
+    remote_src: yes
+    mode: 0755
+    owner: root
+    group: root
